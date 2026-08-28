@@ -1,0 +1,8 @@
+{
+  "name": "Remix منصة شحن الباقات والرصيد",
+  "description": "منصة يدوية وبسيطة لشحن باقات الإنترنت والمكالمات والرصيد لشبكات فودافون، أورنج، اتصالات، ووي مع لوحة تحكم كاملة وتتبع للطلبات",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
