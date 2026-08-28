@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS admins (
   created_at text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  id text PRIMARY KEY,
+  admin_id text NOT NULL,
+  expires_at text NOT NULL,
+  created_at text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   id text PRIMARY KEY,
   site_name text,

@@ -9,6 +9,13 @@ export const admins = pgTable('admins', {
   createdAt: text('created_at').notNull(),
 });
 
+export const adminSessions = pgTable('admin_sessions', {
+  id: text('id').primaryKey(),
+  adminId: text('admin_id').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
 // Platform Settings Table
 export const settings = pgTable('settings', {
   id: text('id').primaryKey(), // 'default'

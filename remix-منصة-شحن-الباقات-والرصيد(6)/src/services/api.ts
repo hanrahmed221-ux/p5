@@ -10,6 +10,9 @@ import {
 } from '../types';
 
 const ADMIN_TOKEN_KEY = 'recharge_admin_token';
+try {
+  localStorage.removeItem(ADMIN_TOKEN_KEY);
+} catch (e) {}
 const CLIENT_STORAGE_KEY = 'recharge_local_clean_v3';
 
 const getNextRenewalDate = (renewalDay: number, from = new Date()) => {
@@ -293,6 +296,9 @@ const initialFallbackData = {
 
 // Client localStorage Helper
 function getLocalFallbackDb() {
+  if (sessionStorage.getItem(ADMIN_TOKEN_KEY)) {
+    throw new Error('لا يمكن استخدام البيانات المحلية كبديل لبيانات الإدارة');
+  }
   try {
     const raw = localStorage.getItem(CLIENT_STORAGE_KEY);
     if (raw) {
@@ -516,24 +522,38 @@ export const api = {
   },
 
   // Admin Auth APIs
-  getAdminToken(): string | null {
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
+  getAdminToken(): string {
+    const token = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    if (!token) throw new Error('لا يوجد جلسة مسجلة');
+    return token;
   },
 
   getStoredAdminToken(): string | null {
-    return this.getAdminToken();
+    return sessionStorage.getItem(ADMIN_TOKEN_KEY);
   },
 
   setAdminToken(token: string) {
-    localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
   },
 
   removeAdminToken() {
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    try {
+      localStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch (e) {}
   },
 
-  logoutAdmin() {
+  async logoutAdmin() {
+    const token = this.getStoredAdminToken();
     this.removeAdminToken();
+    if (!token) return;
+    try {
+      await fetch('/api/admin/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        keepalive: true,
+      });
+    } catch (e) {}
   },
 
   async adminLogin(email: string, password: string): Promise<{ token: string; admin: any }> {

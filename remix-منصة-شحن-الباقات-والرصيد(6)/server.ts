@@ -12,6 +12,10 @@ app.set('trust proxy', 1);
 // Security & Parsing Middlewares
 app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use('/api/admin', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // Security Headers Middleware (compatible with AI Studio iframe live preview)
 app.use((req, res, next) => {
@@ -81,51 +85,6 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ----------------------------------------------------
-// SECURE TOKEN & AUTHENTICATION (HMAC-SHA256)
-// ----------------------------------------------------
-const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'development-only-secret');
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET must be configured in production.');
-}
-
-function generateToken(adminId: string, email: string): string {
-  const payload = {
-    adminId,
-    email,
-    exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days expiration
-  };
-  const str = JSON.stringify(payload);
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(str).digest('hex');
-  return Buffer.from(str).toString('base64') + '.' + signature;
-}
-
-function verifyToken(token: string): { adminId: string; email: string } | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 2) return null;
-    const [b64Payload, signature] = parts;
-    if (!b64Payload || !signature) return null;
-
-    const str = Buffer.from(b64Payload, 'base64').toString('utf-8');
-    const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(str).digest('hex');
-
-    // Constant-time signature comparison to prevent timing attacks
-    const sigBuf = Buffer.from(signature, 'hex');
-    const expBuf = Buffer.from(expectedSig, 'hex');
-    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-      return null;
-    }
-
-    const payload = JSON.parse(str);
-    if (!payload.adminId || !payload.exp || Date.now() > payload.exp) {
-      return null;
-    }
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
 // Strict Admin Authentication Middleware (No backdoors or fallbacks)
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
@@ -138,13 +97,13 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
     return res.status(401).json({ error: 'جلسة تسجيل الدخول مفقودة' });
   }
 
-  const payload = verifyToken(token);
-  if (!payload) {
+  const session = await db.getAdminSession(token);
+  if (!session) {
     return res.status(401).json({ error: 'جلسة تسجيل الدخول منتهية أو غير صحيحة' });
   }
 
-  const admin = await db.getAdminById(payload.adminId);
-  if (!admin || admin.email.toLowerCase() !== payload.email.toLowerCase()) {
+  const admin = await db.getAdminById(session.adminId);
+  if (!admin) {
     return res.status(401).json({ error: 'حساب المدير غير موجود أو تم تعديله' });
   }
 
@@ -388,7 +347,9 @@ app.post(
     await db.updateAdminPassword(admin.id, hashPassword(password));
   }
 
-  const token = generateToken(admin.id, admin.email);
+  const token = crypto.randomBytes(32).toString('base64url');
+  const nowIso = new Date().toISOString();
+  await db.createAdminSession(token, admin.id, new Date(Date.now() + 30 * 60 * 1000).toISOString(), nowIso);
 
   res.json({
     success: true,
@@ -401,6 +362,15 @@ app.post(
   });
   }
 );
+
+app.post('/api/admin/logout', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token) await db.deleteAdminSession(token);
+  }
+  res.status(204).end();
+});
 
 app.get('/api/admin/me', requireAdmin, (req, res) => {
   const admin = (req as any).admin;

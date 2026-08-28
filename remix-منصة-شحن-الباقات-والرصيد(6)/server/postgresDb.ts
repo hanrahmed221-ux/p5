@@ -46,14 +46,6 @@ export function verifyPassword(password: string, hash: string): boolean {
 }
 
 // Default Seed Data
-const DEFAULT_ADMIN = {
-  id: 'admin_1',
-  name: 'مدير المنصة',
-  email: 'admin@recharge.com',
-  password_hash: hashPassword('admin123'),
-  created_at: new Date('2026-01-01T00:00:00.000Z').toISOString(),
-};
-
 const DEFAULT_SETTINGS: SiteSettings = {
   site_name: 'شحن تك | منصة شحن الباقات والرصيد',
   site_tagline: 'خدمة شحن باقات الإنترنت والمكالمات والرصيد لجميع الشبكات المصرية',
@@ -550,6 +542,12 @@ class PostgresDatabase {
     if (this.initialized) return;
     try {
       await db.execute(sql`ALTER TABLE ${schema.orders} ADD COLUMN IF NOT EXISTS payment_proof text`);
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS admin_sessions (
+        id text PRIMARY KEY,
+        admin_id text NOT NULL,
+        expires_at text NOT NULL,
+        created_at text NOT NULL
+      )`);
       // 1. Ensure counter exists
       const existingCounter = await db.select().from(schema.counters).where(eq(schema.counters.id, 'main'));
       if (existingCounter.length === 0) {
@@ -557,14 +555,26 @@ class PostgresDatabase {
       }
 
       // 2. Ensure Admin exists
-      const existingAdmins = await db.select().from(schema.admins);
+      let existingAdmins = await db.select().from(schema.admins);
+      const legacyDefaultAdmin = existingAdmins.find(
+        (admin) => admin.id === 'admin_1' && admin.email.toLowerCase() === 'admin@recharge.com'
+      );
+      if (legacyDefaultAdmin) {
+        await db.delete(schema.admins).where(eq(schema.admins.id, legacyDefaultAdmin.id));
+        existingAdmins = existingAdmins.filter((admin) => admin.id !== legacyDefaultAdmin.id);
+      }
       if (existingAdmins.length === 0) {
+        const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+        const adminPassword = process.env.ADMIN_PASSWORD;
+        if (!adminEmail || !adminPassword || adminPassword.length < 12) {
+          throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD (minimum 12 characters) must be configured before starting.');
+        }
         await db.insert(schema.admins).values({
-          id: DEFAULT_ADMIN.id,
-          name: DEFAULT_ADMIN.name,
-          email: DEFAULT_ADMIN.email,
-          passwordHash: DEFAULT_ADMIN.password_hash,
-          createdAt: DEFAULT_ADMIN.created_at,
+          id: `admin_${crypto.randomUUID()}`,
+          name: 'مدير المنصة',
+          email: adminEmail,
+          passwordHash: hashPassword(adminPassword),
+          createdAt: new Date().toISOString(),
         });
       }
 
@@ -1753,7 +1763,7 @@ class PostgresDatabase {
         created_at: r.createdAt,
       }));
     } catch {
-      return [DEFAULT_ADMIN];
+      return [];
     }
   }
 
@@ -1801,6 +1811,28 @@ class PostgresDatabase {
     } catch {
       return false;
     }
+  }
+
+  async createAdminSession(id: string, adminId: string, expiresAt: string, createdAt: string): Promise<void> {
+    await this.initDatabase();
+    await db.insert(schema.adminSessions).values({ id, adminId, expiresAt, createdAt });
+  }
+
+  async getAdminSession(id: string): Promise<{ id: string; adminId: string; expiresAt: string } | undefined> {
+    await this.initDatabase();
+    const rows = await db.select().from(schema.adminSessions).where(eq(schema.adminSessions.id, id));
+    const session = rows[0];
+    if (!session) return undefined;
+    if (Date.now() >= Date.parse(session.expiresAt)) {
+      await this.deleteAdminSession(id);
+      return undefined;
+    }
+    return { id: session.id, adminId: session.adminId, expiresAt: session.expiresAt };
+  }
+
+  async deleteAdminSession(id: string): Promise<void> {
+    await this.initDatabase();
+    await db.delete(schema.adminSessions).where(eq(schema.adminSessions.id, id));
   }
 
   // --- DATA MANAGEMENT & CLEANING ---

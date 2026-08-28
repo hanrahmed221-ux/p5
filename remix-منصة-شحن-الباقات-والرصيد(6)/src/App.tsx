@@ -32,16 +32,18 @@ const SCROLL_POSITION_KEY = 'recharge_scroll_position';
 const getViewFromHash = () => {
   const hash = window.location.hash.replace(/^#/, '');
   if (hash === 'tracking') return 'tracking' as const;
-  if (hash.startsWith('admin')) return 'admin_dashboard' as const;
   return null;
 };
 
+const isAdminHash = () => window.location.hash.replace(/^#/, '').startsWith('admin');
+
 export function App() {
   const [view, setView] = useState<'storefront' | 'tracking' | 'admin_login' | 'admin_dashboard'>(() => {
+    if (isAdminHash()) return 'admin_login';
     const hashView = getViewFromHash();
     if (hashView) return hashView;
     const savedView = window.localStorage.getItem(STOREFRONT_VIEW_KEY);
-    return savedView === 'tracking' || savedView === 'admin_login' || savedView === 'admin_dashboard'
+    return savedView === 'tracking' || savedView === 'admin_login'
       ? savedView
       : 'storefront';
   });
@@ -64,6 +66,7 @@ export function App() {
 
   // Admin Auth state
   const [adminUser, setAdminUser] = useState<{ id: string; email: string; name: string } | null>(null);
+  const [adminAuthStatus, setAdminAuthStatus] = useState<'checking' | 'authenticated' | 'unauthenticated'>('checking');
   const didRestoreLocation = useRef(false);
   const isPageReload = performance.getEntriesByType('navigation').some(
     (entry) => (entry as PerformanceNavigationTiming).type === 'reload'
@@ -102,17 +105,33 @@ export function App() {
     window.addEventListener('pagehide', saveScrollPosition);
     window.addEventListener('beforeunload', saveScrollPosition);
 
-    // Verify existing admin token
-    const savedToken = api.getStoredAdminToken();
-    if (savedToken) {
+    // Only the server can confirm whether an admin session is valid.
+    if (api.getStoredAdminToken()) {
       api.getAdminMe()
         .then((res) => {
-          if (res && res.admin) setAdminUser(res.admin);
+          if (res && res.admin) {
+            setAdminUser(res.admin);
+            setAdminAuthStatus('authenticated');
+            if (isAdminHash()) setView('admin_dashboard');
+          } else {
+            void api.logoutAdmin();
+            setAdminUser(null);
+            setAdminAuthStatus('unauthenticated');
+            if (isAdminHash()) setView('admin_login');
+          }
         })
         .catch(() => {
-          api.logoutAdmin();
+          void api.logoutAdmin();
           setAdminUser(null);
+          setAdminAuthStatus('unauthenticated');
+          if (isAdminHash()) setView('admin_login');
+        })
+        .finally(() => {
+          if (view === 'admin_dashboard' && api.getStoredAdminToken() === null) setView('admin_login');
         });
+    } else {
+      setAdminAuthStatus('unauthenticated');
+      if (view === 'admin_dashboard') setView('admin_login');
     }
 
     return () => {
@@ -188,28 +207,53 @@ export function App() {
   };
 
   const handleOpenAdmin = () => {
-    if (api.getStoredAdminToken()) {
-      setView('admin_dashboard');
-    } else {
+    if (!api.getStoredAdminToken()) {
+      setAdminUser(null);
+      setAdminAuthStatus('unauthenticated');
       setView('admin_login');
+      return;
     }
+
+    setAdminAuthStatus('checking');
+    setView('admin_login');
+    api.getAdminMe()
+      .then((res) => {
+        setAdminUser(res.admin);
+        setAdminAuthStatus('authenticated');
+        setView('admin_dashboard');
+      })
+      .catch(() => {
+        void api.logoutAdmin();
+        setAdminUser(null);
+        setAdminAuthStatus('unauthenticated');
+      });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAdminLoginSuccess = (admin: any) => {
     setAdminUser(admin);
+    setAdminAuthStatus('authenticated');
     setView('admin_dashboard');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAdminLogout = () => {
-    api.logoutAdmin();
+    void api.logoutAdmin();
     setAdminUser(null);
+    setAdminAuthStatus('unauthenticated');
     setView('storefront');
   };
 
   // If in Admin Dashboard view
-  if (view === 'admin_dashboard') {
+  if (view === 'admin_dashboard' && adminAuthStatus !== 'authenticated') {
+    return (
+      <div className="min-h-screen bg-slate-100/70 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
+
+  if (view === 'admin_dashboard' && adminUser) {
     return (
       <AdminDashboard
         adminUser={adminUser}
