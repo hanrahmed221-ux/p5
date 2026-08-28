@@ -12,6 +12,17 @@ import {
 const ADMIN_TOKEN_KEY = 'recharge_admin_token';
 const CLIENT_STORAGE_KEY = 'recharge_local_clean_v3';
 
+const getNextRenewalDate = (renewalDay: number, from = new Date()) => {
+  const next = new Date(from.getFullYear(), from.getMonth(), 1);
+  const currentMonthLastDay = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+  if (from.getDate() >= Math.min(Math.max(renewalDay, 1), currentMonthLastDay)) {
+    next.setMonth(next.getMonth() + 1);
+  }
+  const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(Math.max(renewalDay, 1), lastDay));
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+};
+
 // Rich initial seed dataset for reliable offline/standalone use
 const initialFallbackData = {
   settings: {
@@ -400,6 +411,7 @@ export const api = {
     package_id: string;
     payment_method: 'vodafone_cash' | 'instapay' | 'manual_transfer';
     notes?: string;
+    payment_proof?: string;
   }): Promise<{ success: boolean; message: string; order: Order }> {
     try {
       const res = await fetch('/api/orders', {
@@ -452,6 +464,7 @@ export const api = {
         payment_method: data.payment_method,
         amount: pkg?.price || 100,
         notes: data.notes?.trim() || undefined,
+        payment_proof: data.payment_proof || undefined,
         status: 'new',
         status_history: [
           {
@@ -571,7 +584,7 @@ export const api = {
       }
       return result;
     } catch (e: any) {
-      return { success: true, message: 'تم تغيير كلمة المرور بنجاح (محلياً)' };
+      throw e;
     }
   },
 
@@ -648,6 +661,11 @@ export const api = {
       const profitMargin = totalSales > 0 ? Number(((totalProfit / totalSales) * 100).toFixed(1)) : 0;
 
       const uniqueCustomers = new Set(validSalesOrders.map((o) => o.phone_number)).size;
+
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const dueRenewalsCount = (local.subscribers || []).filter(
+        (s: MonthlySubscriber) => s.active && s.next_renewal_date && s.next_renewal_date <= todayStr
+      ).length;
 
       // Today stats calculation
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -741,6 +759,7 @@ export const api = {
         todaySales,
         todayCost,
         todayProfit,
+        dueRenewalsCount,
         recentOrders: sortedRecent.slice(0, 10),
         companyBreakdown,
         topPackages,
@@ -1334,17 +1353,7 @@ export const api = {
       if (subIdx !== -1) {
         const sub = local.subscribers[subIdx];
         const now = new Date();
-        const curNext = new Date(sub.next_renewal_date || now.toISOString());
-        let nextMonth = curNext.getMonth() + 1;
-        let nextYear = curNext.getFullYear();
-        if (nextMonth > 11) {
-          nextMonth = 0;
-          nextYear += 1;
-        }
-        const day = sub.renewal_day || curNext.getDate() || 1;
-        const maxDaysInNextMonth = new Date(nextYear, nextMonth + 1, 0).getDate();
-        const finalDay = Math.min(day, maxDaysInNextMonth);
-        const newNextDateStr = `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(finalDay).padStart(2, '0')}`;
+        const newNextDateStr = getNextRenewalDate(sub.renewal_day || 1, now);
 
         local.subscribers[subIdx] = {
           ...sub,

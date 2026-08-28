@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import * as React from 'react';
+import { useState } from 'react';
 import { Package, Company, SiteSettings, Order } from '../types';
 import { api } from '../services/api';
 import { CompanyBadge } from './CompanyBadge';
@@ -16,8 +17,11 @@ import {
   ShieldCheck,
   Zap,
   ArrowRight,
+  Upload,
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import * as confetti from 'canvas-confetti';
+
+const triggerConfetti = (confetti as any).default || (confetti as any);
 
 interface OrderModalProps {
   pkg: Package | null;
@@ -34,18 +38,20 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   onClose,
   onOrderSuccess,
 }) => {
-  if (!pkg) return null;
-
   const [customerName, setCustomerName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [hasDifferentContact, setHasDifferentContact] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'vodafone_cash' | 'instapay' | 'manual_transfer'>('vodafone_cash');
   const [notes, setNotes] = useState('');
+  const [paymentProof, setPaymentProof] = useState('');
+  const [paymentProofName, setPaymentProofName] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copiedNumber, setCopiedNumber] = useState(false);
   const [copiedInstapay, setCopiedInstapay] = useState(false);
+
+  if (!pkg) return null;
 
   const company = companies.find((c) => c.id === pkg.company_id);
   const companyName = company?.name || pkg.company_id;
@@ -79,6 +85,28 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     }
   };
 
+  const handlePaymentProofChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setErrorMessage('يرجى اختيار صورة JPG أو PNG أو WebP فقط');
+      return;
+    }
+    if (file.size > 1.5 * 1024 * 1024) {
+      setErrorMessage('حجم صورة التحويل يجب ألا يتجاوز 1.5 ميجابايت');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPaymentProof(reader.result);
+        setPaymentProofName(file.name);
+        setErrorMessage('');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -105,11 +133,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         package_id: pkg.id,
         payment_method: paymentMethod,
         notes: notes.trim() || undefined,
+        payment_proof: paymentProof || undefined,
       });
 
       // Trigger Confetti
       try {
-        confetti({
+        triggerConfetti({
           particleCount: 80,
           spread: 70,
           origin: { y: 0.6 },
@@ -130,7 +159,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
       <div
         id="order-modal-container"
-        className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-6 text-right max-h-[92vh] flex flex-col"
+        className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden my-3 sm:my-6 text-right max-h-[calc(100dvh-1.5rem)] sm:max-h-[92vh] min-h-0 flex flex-col"
       >
         {/* Modal Header */}
         <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white p-5 sm:p-6 flex items-center justify-between shrink-0">
@@ -155,7 +184,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1">
+        <div className="p-5 sm:p-6 overflow-y-auto overscroll-contain space-y-6 flex-1 min-h-0">
           {/* Selected Package Summary Box */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
@@ -395,6 +424,52 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   <li>أرسل الطلب الآن وسيتم التحقق وتنفيذ الشحن لخطك فوراً.</li>
                 </ol>
               </div>
+            </div>
+
+            {/* Optional Notes */}
+            <div>
+              <label className="block text-xs font-extrabold text-slate-800 mb-1.5 flex items-center gap-1.5">
+                <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                <span>صورة التحويل:</span>
+                <span className="text-slate-400 font-normal">اختياري</span>
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <label
+                  htmlFor="payment-proof-input"
+                  className="flex items-center justify-center gap-2 w-full min-h-14 px-4 py-3 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:border-emerald-500 hover:bg-emerald-50/40 cursor-pointer transition-colors"
+                >
+                  <Upload className="w-5 h-5 text-emerald-600" />
+                  <span className="text-xs font-bold text-slate-700 truncate">
+                    {paymentProofName || 'اختيار صورة من الهاتف'}
+                  </span>
+                  <input
+                    id="payment-proof-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePaymentProofChange}
+                    className="sr-only"
+                  />
+                </label>
+                <label
+                  htmlFor="payment-proof-camera-input"
+                  className="flex items-center justify-center gap-2 w-full min-h-14 px-4 py-3 rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/50 hover:border-emerald-500 hover:bg-emerald-50 cursor-pointer transition-colors"
+                >
+                  <Phone className="w-5 h-5 text-emerald-600" />
+                  <span className="text-xs font-bold text-slate-700">التقاط بالكاميرا</span>
+                  <input
+                    id="payment-proof-camera-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handlePaymentProofChange}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+              {paymentProof && (
+                <img src={paymentProof} alt="معاينة إيصال التحويل" className="mt-2 max-h-32 w-full object-contain rounded-xl border border-slate-200 bg-white p-1" />
+              )}
+              <p className="mt-1 text-[10px] text-slate-400">JPG أو PNG أو WebP، بحد أقصى 1.5 ميجابايت</p>
             </div>
 
             {/* Optional Notes */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Company, Category, Package, SiteSettings, Order } from './types';
 import { api } from './services/api';
 import { Header } from './components/Header';
@@ -25,8 +25,26 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+const STOREFRONT_VIEW_KEY = 'recharge_current_view';
+const STOREFRONT_SECTION_KEY = 'recharge_current_section';
+const SCROLL_POSITION_KEY = 'recharge_scroll_position';
+
+const getViewFromHash = () => {
+  const hash = window.location.hash.replace(/^#/, '');
+  if (hash === 'tracking') return 'tracking' as const;
+  if (hash.startsWith('admin')) return 'admin_dashboard' as const;
+  return null;
+};
+
 export function App() {
-  const [view, setView] = useState<'storefront' | 'tracking' | 'admin_login' | 'admin_dashboard'>('storefront');
+  const [view, setView] = useState<'storefront' | 'tracking' | 'admin_login' | 'admin_dashboard'>(() => {
+    const hashView = getViewFromHash();
+    if (hashView) return hashView;
+    const savedView = window.localStorage.getItem(STOREFRONT_VIEW_KEY);
+    return savedView === 'tracking' || savedView === 'admin_login' || savedView === 'admin_dashboard'
+      ? savedView
+      : 'storefront';
+  });
   const [companies, setCompanies] = useState<Company[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
@@ -46,6 +64,10 @@ export function App() {
 
   // Admin Auth state
   const [adminUser, setAdminUser] = useState<{ id: string; email: string; name: string } | null>(null);
+  const didRestoreLocation = useRef(false);
+  const isPageReload = performance.getEntriesByType('navigation').some(
+    (entry) => (entry as PerformanceNavigationTiming).type === 'reload'
+  );
 
   // Fetch initial site data
   const loadInitialData = async () => {
@@ -64,7 +86,21 @@ export function App() {
   };
 
   useEffect(() => {
+    const previousScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
     loadInitialData();
+
+    if (!window.location.hash) {
+      const savedSection = window.localStorage.getItem(STOREFRONT_SECTION_KEY);
+      if (savedSection) window.history.replaceState(null, '', `#${savedSection}`);
+    }
+
+    const saveScrollPosition = () => {
+      window.sessionStorage.setItem(SCROLL_POSITION_KEY, String(window.scrollY));
+    };
+    window.addEventListener('scroll', saveScrollPosition, { passive: true });
+    window.addEventListener('pagehide', saveScrollPosition);
+    window.addEventListener('beforeunload', saveScrollPosition);
 
     // Verify existing admin token
     const savedToken = api.getStoredAdminToken();
@@ -78,7 +114,49 @@ export function App() {
           setAdminUser(null);
         });
     }
+
+    return () => {
+      window.removeEventListener('scroll', saveScrollPosition);
+      window.removeEventListener('pagehide', saveScrollPosition);
+      window.removeEventListener('beforeunload', saveScrollPosition);
+      window.history.scrollRestoration = previousScrollRestoration;
+    };
   }, []);
+
+  // Restore the requested section only after its content has rendered.
+  useEffect(() => {
+    if (loading || view !== 'storefront' || didRestoreLocation.current) return;
+
+    const sectionHash = window.location.hash.replace(/^#/, '');
+    const sectionId = sectionHash === 'packages' ? 'packages-section' : sectionHash === 'contact' ? 'contact-section' : null;
+    const savedScroll = Number(window.sessionStorage.getItem(SCROLL_POSITION_KEY));
+    didRestoreLocation.current = true;
+    const timer = window.setTimeout(() => {
+      if (isPageReload && Number.isFinite(savedScroll)) {
+        window.scrollTo({ top: savedScroll, left: 0, behavior: 'auto' });
+      } else if (sectionHash === 'home') {
+        window.scrollTo(0, 0);
+      } else if (sectionId) {
+        document.getElementById(sectionId)?.scrollIntoView({ block: 'start' });
+      } else if (savedScroll > 0) {
+        window.scrollTo(0, savedScroll);
+      }
+    }, 100);
+
+    return () => window.clearTimeout(timer);
+  }, [isPageReload, loading, view]);
+
+  useEffect(() => {
+    const hashView = getViewFromHash();
+    if (view === 'admin_dashboard') {
+      if (!window.location.hash.startsWith('#admin')) window.history.replaceState(null, '', '#admin');
+    } else if (view === 'tracking' && hashView !== 'tracking') {
+      window.history.replaceState(null, '', '#tracking');
+    } else if (view === 'storefront' && (hashView === 'tracking' || hashView === 'admin_dashboard')) {
+      window.history.replaceState(null, '', '#home');
+    }
+    window.localStorage.setItem(STOREFRONT_VIEW_KEY, view);
+  }, [view]);
 
   const handleSelectCompany = (companyId: string) => {
     setSelectedCompanyId(companyId);

@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS orders (
   payment_method text NOT NULL,
   amount double precision NOT NULL,
   notes text,
+  payment_proof text,
   admin_notes text,
   status text NOT NULL DEFAULT 'new',
   status_history jsonb NOT NULL,

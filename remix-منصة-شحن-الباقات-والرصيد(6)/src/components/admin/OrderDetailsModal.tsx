@@ -204,6 +204,14 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   </p>
                 </div>
               )}
+              {order.payment_proof && (
+                <div className="pt-1 border-t border-slate-200">
+                  <span className="text-slate-500 block font-bold">صورة التحويل:</span>
+                  <a href={order.payment_proof} target="_blank" rel="noreferrer" className="block mt-1">
+                    <img src={order.payment_proof} alt="إيصال التحويل" className="max-h-48 w-full object-contain rounded-lg border border-slate-200 bg-white p-1" />
+                  </a>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">

@@ -1,6 +1,6 @@
-import React from 'react';
+import * as React from 'react';
 import { SiteSettings } from '../types';
-import { Zap, Shield, Heart, CheckCircle2 } from 'lucide-react';
+import { Zap, Shield } from 'lucide-react';
 
 interface FooterProps {
   settings: SiteSettings | null;

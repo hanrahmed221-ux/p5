@@ -44,7 +44,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onSettingsUpdated,
   onDataChanged,
 }) => {
-  const [activeTab, setActiveTab] = useState<'orders' | 'subscribers' | 'stats' | 'packages' | 'companies' | 'settings'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'subscribers' | 'stats' | 'packages' | 'companies' | 'settings'>(() => {
+    const hashTab = window.location.hash.match(/^#admin\/(orders|subscribers|stats|packages|companies|settings)$/)?.[1];
+    if (hashTab) return hashTab as 'orders' | 'subscribers' | 'stats' | 'packages' | 'companies' | 'settings';
+    const savedTab = window.localStorage.getItem('recharge_admin_tab');
+    return savedTab === 'subscribers' || savedTab === 'stats' || savedTab === 'packages' || savedTab === 'companies' || savedTab === 'settings'
+      ? savedTab
+      : 'orders';
+  });
   const [dueRenewalsCount, setDueRenewalsCount] = useState<number>(0);
 
   // Check for due renewals
@@ -61,6 +68,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     checkDueRenewals();
+  }, [activeTab]);
+
+  useEffect(() => {
+    window.localStorage.setItem('recharge_admin_tab', activeTab);
+    window.history.replaceState(null, '', `#admin/${activeTab}`);
   }, [activeTab]);
 
   const navTabs = [

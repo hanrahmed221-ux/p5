@@ -1,21 +1,27 @@
 import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import { db, hashPassword, verifyPassword } from './server/db.ts';
-import { OrderStatus } from './src/types.ts';
+import type { OrderStatus } from './src/types.ts';
 
 const app = express();
 const PORT = 3000;
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 // Security & Parsing Middlewares
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '3mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Security Headers Middleware (compatible with AI Studio iframe live preview)
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'");
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
@@ -42,7 +48,7 @@ const loginFailedAttempts = new Map<string, { attempts: number; lockUntil: numbe
 
 function rateLimiter(maxRequests: number, windowMs: number, customMessage: string) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown-ip';
+    const ip = req.ip || 'unknown-ip';
     const now = Date.now();
     const record = ipLimits.get(`${ip}:${req.path}`) || { count: 0, resetTime: now + windowMs };
 
@@ -77,7 +83,10 @@ setInterval(() => {
 // ----------------------------------------------------
 // SECURE TOKEN & AUTHENTICATION (HMAC-SHA256)
 // ----------------------------------------------------
-const JWT_SECRET = process.env.JWT_SECRET || 'recharge_platform_secret_key_prod_2026_98a72c4e';
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'development-only-secret');
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET must be configured in production.');
+}
 
 function generateToken(adminId: string, email: string): string {
   const payload = {
@@ -216,13 +225,20 @@ app.post(
   rateLimiter(10, 60 * 1000, 'تم تجاوز الحد المسموح للطلبات. يرجى الانتظار دقيقة والمحاولة مجدداً.'),
   async (req, res) => {
     try {
-      const { customer_name, phone_number, contact_phone, package_id, payment_method, notes } = req.body;
+      const { customer_name, phone_number, contact_phone, package_id, payment_method, notes, payment_proof } = req.body;
 
       // Sanitization
       const cleanCustomerName = sanitizeText(customer_name, 80);
       const cleanPhone = String(phone_number || '').replace(/\s+/g, '').replace(/[^0-9+]/g, '');
       const cleanContactPhone = contact_phone ? sanitizeText(contact_phone, 20) : undefined;
       const cleanNotes = notes ? sanitizeText(notes, 400) : undefined;
+      const cleanPaymentProof = typeof payment_proof === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(payment_proof)
+        ? payment_proof
+        : undefined;
+
+      if (payment_proof && (!cleanPaymentProof || payment_proof.length > 2_000_000)) {
+        return res.status(400).json({ error: 'صورة التحويل غير صالحة أو حجمها أكبر من الحد المسموح' });
+      }
 
       // Validations
       if (!cleanCustomerName || cleanCustomerName.length < 2) {
@@ -260,6 +276,7 @@ app.post(
         package_id,
         payment_method: selectedMethod as any,
         notes: cleanNotes,
+        payment_proof: cleanPaymentProof,
       });
 
       res.status(201).json({
@@ -332,8 +349,11 @@ app.get(
 // ==========================================
 
 // Login with Brute Force Protection (max 5 failed attempts per IP within 15 min)
-app.post('/api/admin/login', async (req, res) => {
-  const ip = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown-ip';
+app.post(
+  '/api/admin/login',
+  rateLimiter(10, 15 * 60 * 1000, 'تم تجاوز عدد محاولات تسجيل الدخول. يرجى المحاولة لاحقاً.'),
+  async (req, res) => {
+  const ip = req.ip || 'unknown-ip';
   const now = Date.now();
   const attemptRecord = loginFailedAttempts.get(ip) || { attempts: 0, lockUntil: 0 };
 
@@ -364,6 +384,10 @@ app.post('/api/admin/login', async (req, res) => {
   // Reset failed attempts upon successful login
   loginFailedAttempts.delete(ip);
 
+  if (!admin.password_hash.startsWith('scrypt$')) {
+    await db.updateAdminPassword(admin.id, hashPassword(password));
+  }
+
   const token = generateToken(admin.id, admin.email);
 
   res.json({
@@ -375,7 +399,8 @@ app.post('/api/admin/login', async (req, res) => {
       email: admin.email,
     },
   });
-});
+  }
+);
 
 app.get('/api/admin/me', requireAdmin, (req, res) => {
   const admin = (req as any).admin;
@@ -879,6 +904,7 @@ async function startServer() {
   }
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

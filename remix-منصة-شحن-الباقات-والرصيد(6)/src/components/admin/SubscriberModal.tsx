@@ -48,14 +48,16 @@ export const SubscriberModal: React.FC<SubscriberModalProps> = ({
       const now = new Date();
       let targetMonth = now.getMonth();
       let targetYear = now.getFullYear();
-      if (now.getDate() > renewalDay) {
+      const currentMonthLastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+      const effectiveRenewalDay = Math.min(renewalDay, currentMonthLastDay);
+      if (now.getDate() >= effectiveRenewalDay) {
         targetMonth += 1;
         if (targetMonth > 11) {
           targetMonth = 0;
           targetYear += 1;
         }
       }
-      const day = Math.min(renewalDay, 28); // safe
+      const day = Math.min(renewalDay, new Date(targetYear, targetMonth + 1, 0).getDate());
       setNextRenewalDate(`${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
     }
   }, [renewalDay]);

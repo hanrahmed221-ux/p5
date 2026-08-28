@@ -53,6 +53,10 @@ export const Header: React.FC<HeaderProps> = ({
 
   const handleNavClick = (id: string) => {
     setMobileMenuOpen(false);
+    window.sessionStorage.removeItem('recharge_scroll_position');
+    const section = id === 'track' ? 'tracking' : id;
+    window.localStorage.setItem('recharge_current_section', section);
+    window.history.replaceState(null, '', `#${section}`);
 
     if (typeof setActiveTab === 'function') {
       setActiveTab(id as any);

@@ -2,18 +2,41 @@ import crypto from 'crypto';
 import { eq, desc, asc, like, and, or, sql } from 'drizzle-orm';
 import { db } from '../src/db/index.ts';
 import * as schema from '../src/db/schema.ts';
-import { Company, Category, Package, Order, MonthlySubscriber, SiteSettings, Admin, OrderStatus } from '../src/types.ts';
+import type { Company, Category, Package, Order, MonthlySubscriber, SiteSettings, Admin, OrderStatus } from '../src/types.ts';
 
-const DEFAULT_SALT = process.env.PASSWORD_SALT || 'shahn_secure_salt_prod_2026_9837a';
+const LEGACY_SALT = 'shahn_secure_salt_prod_2026_9837a';
+const PASSWORD_SALT = process.env.PASSWORD_SALT || LEGACY_SALT;
+
+function getNextRenewalDate(renewalDay: number, from = new Date()): string {
+  const next = new Date(from.getFullYear(), from.getMonth(), 1);
+  const currentMonthLastDay = new Date(from.getFullYear(), from.getMonth() + 1, 0).getDate();
+  if (from.getDate() >= Math.min(Math.max(renewalDay, 1), currentMonthLastDay)) {
+    next.setMonth(next.getMonth() + 1);
+  }
+  const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+  next.setDate(Math.min(Math.max(renewalDay, 1), lastDay));
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+}
 
 export function hashPassword(password: string): string {
-  return crypto.createHash('sha256').update(password + DEFAULT_SALT).digest('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = crypto.scryptSync(password, `${PASSWORD_SALT}:${salt}`, 64);
+  return `scrypt$${salt}$${derivedKey.toString('hex')}`;
 }
 
 export function verifyPassword(password: string, hash: string): boolean {
   try {
-    const computed = hashPassword(password);
-    const bufA = Buffer.from(computed, 'utf-8');
+    if (hash.startsWith('scrypt$')) {
+      const [, salt, storedKey] = hash.split('$');
+      if (!salt || !storedKey) return false;
+      const computedKey = crypto.scryptSync(password, `${PASSWORD_SALT}:${salt}`, 64);
+      const bufA = Buffer.from(computedKey.toString('hex'), 'utf-8');
+      const bufB = Buffer.from(storedKey, 'utf-8');
+      return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+    }
+
+    const legacyKey = crypto.createHash('sha256').update(password + LEGACY_SALT).digest('hex');
+    const bufA = Buffer.from(legacyKey, 'utf-8');
     const bufB = Buffer.from(hash, 'utf-8');
     if (bufA.length !== bufB.length) return false;
     return crypto.timingSafeEqual(bufA, bufB);
@@ -526,6 +549,7 @@ class PostgresDatabase {
   async initDatabase() {
     if (this.initialized) return;
     try {
+      await db.execute(sql`ALTER TABLE ${schema.orders} ADD COLUMN IF NOT EXISTS payment_proof text`);
       // 1. Ensure counter exists
       const existingCounter = await db.select().from(schema.counters).where(eq(schema.counters.id, 'main'));
       if (existingCounter.length === 0) {
@@ -1006,6 +1030,7 @@ class PostgresDatabase {
     package_id: string;
     payment_method: 'vodafone_cash' | 'instapay' | 'manual_transfer';
     notes?: string;
+    payment_proof?: string;
   }): Promise<Order> {
     await this.initDatabase();
     const pkg = await this.getPackage(data.package_id);
@@ -1049,6 +1074,7 @@ class PostgresDatabase {
       paymentMethod: data.payment_method,
       amount: pkg.price,
       notes: data.notes || null,
+      paymentProof: data.payment_proof || null,
       adminNotes: null,
       status: 'new',
       statusHistory: initialHistory,
@@ -1106,6 +1132,7 @@ class PostgresDatabase {
         payment_method: r.paymentMethod as any,
         amount: r.amount,
         notes: r.notes || undefined,
+        payment_proof: r.paymentProof || undefined,
         admin_notes: r.adminNotes || undefined,
         status: r.status as OrderStatus,
         status_history: r.statusHistory as any,
@@ -1144,6 +1171,7 @@ class PostgresDatabase {
         payment_method: r.paymentMethod as any,
         amount: r.amount,
         notes: r.notes || undefined,
+        payment_proof: r.paymentProof || undefined,
         admin_notes: r.adminNotes || undefined,
         status: r.status as OrderStatus,
         status_history: r.statusHistory as any,
@@ -1184,6 +1212,7 @@ class PostgresDatabase {
         payment_method: r.paymentMethod as any,
         amount: r.amount,
         notes: r.notes || undefined,
+        payment_proof: r.paymentProof || undefined,
         admin_notes: r.adminNotes || undefined,
         status: r.status as OrderStatus,
         status_history: r.statusHistory as any,
@@ -1533,7 +1562,8 @@ class PostgresDatabase {
       }));
 
       if (filters?.onlyDue) {
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         list = list.filter((sub) => sub.next_renewal_date <= today);
       }
 
@@ -1586,10 +1616,7 @@ class PostgresDatabase {
 
     let nextDate = data.next_renewal_date;
     if (!nextDate) {
-      const d = new Date();
-      d.setMonth(d.getMonth() + 1);
-      d.setDate(data.renewal_day || 1);
-      nextDate = d.toISOString().split('T')[0];
+      nextDate = getNextRenewalDate(data.renewal_day || 1);
     }
 
     await db.insert(schema.subscribers).values({
@@ -1662,10 +1689,7 @@ class PostgresDatabase {
     if (!sub) return null;
 
     const now = new Date();
-    const nextMonth = new Date(now);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
-    nextMonth.setDate(sub.renewal_day);
-    const nextRenewalDate = nextMonth.toISOString().split('T')[0];
+    const nextRenewalDate = getNextRenewalDate(sub.renewal_day, now);
 
     const updatedSub = await this.updateSubscriber(id, {
       last_recharge_date: now.toISOString(),

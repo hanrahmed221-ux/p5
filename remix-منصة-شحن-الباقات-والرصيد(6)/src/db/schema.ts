@@ -97,6 +97,7 @@ export const orders = pgTable('orders', {
   paymentMethod: text('payment_method').notNull(),
   amount: doublePrecision('amount').notNull(),
   notes: text('notes'),
+  paymentProof: text('payment_proof'),
   adminNotes: text('admin_notes'),
   status: text('status').notNull().default('new'),
   statusHistory: jsonb('status_history').notNull().$type<{ status: string; timestamp: string; note?: string }[]>(),

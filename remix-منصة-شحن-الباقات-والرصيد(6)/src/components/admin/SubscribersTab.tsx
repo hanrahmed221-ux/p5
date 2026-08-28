@@ -54,6 +54,11 @@ export const SubscribersTab: React.FC<SubscribersTabProps> = ({
 
   const currency = settings?.currency || 'جنيه';
 
+  const parseDateOnly = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   const fetchData = async () => {
     try {
       setLoading(true);
@@ -83,7 +88,7 @@ export const SubscribersTab: React.FC<SubscribersTabProps> = ({
     if (!sub.active) return { label: 'متوقف', color: 'bg-slate-100 text-slate-600 border-slate-200', isDue: false, isOverdue: false, days: 0 };
     if (!sub.next_renewal_date) return { label: 'غير محدد', color: 'bg-slate-100 text-slate-500', isDue: false, isOverdue: false, days: 0 };
 
-    const targetDate = new Date(sub.next_renewal_date);
+    const targetDate = parseDateOnly(sub.next_renewal_date);
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const diffTime = targetDate.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -254,7 +259,7 @@ export const SubscribersTab: React.FC<SubscribersTabProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base sm:text-lg font-black text-slate-950">
-                  تنبيه هام: لديك {dueList.length} عميل حان موعد تجديد باقاتهم الشهرية اليوم!
+                  تنبيه هام: لديك {dueList.length} عميل حان موعد تجديد باقته الشهرية أو تأخر عن التجديد!
                 </h3>
               </div>
               <p className="text-xs text-slate-900 font-bold mt-0.5">
@@ -294,7 +299,7 @@ export const SubscribersTab: React.FC<SubscribersTabProps> = ({
             </div>
           </div>
           <div className="text-2xl font-black text-slate-900">
-            {subscribers.length} <span className="text-xs text-slate-400 font-normal">عميل نشط</span>
+            {subscribers.filter((sub) => sub.active).length} <span className="text-xs text-slate-400 font-normal">عميل نشط</span>
           </div>
           <p className="text-[10px] text-slate-400">مشتركون في التجديد الشهري التلقائي</p>
         </div>
@@ -302,7 +307,7 @@ export const SubscribersTab: React.FC<SubscribersTabProps> = ({
         {/* Due Today / Overdue */}
         <div className={`p-4 sm:p-5 rounded-2xl border shadow-xs space-y-1 ${dueList.length > 0 ? 'bg-amber-50/70 border-amber-300' : 'bg-white border-slate-200'}`}>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-amber-900">حان موعد تجديدهم (اليوم)</span>
+            <span className="text-xs font-bold text-amber-900">حان موعدهم أو تأخروا</span>
             <div className="w-8 h-8 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-black">
               <Zap className="w-4 h-4" />
             </div>

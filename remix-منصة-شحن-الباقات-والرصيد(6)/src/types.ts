@@ -77,6 +77,7 @@ export interface Order {
   payment_method: 'vodafone_cash' | 'instapay' | 'manual_transfer';
   amount: number;
   notes?: string;
+  payment_proof?: string;
   status: OrderStatus;
   status_history: StatusHistoryItem[];
   admin_notes?: string;
